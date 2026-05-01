@@ -122,10 +122,9 @@ function draw() {
     location.reload();
   }
 
-  snake.unshift(head);
-}
-
-setInterval(draw, 120);
+  snake.unshift(
+    draw();                 // draw first frame immediatelysetInterval
+  (draw, 120); // game loop
 </script>
 
 </body>
