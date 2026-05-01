@@ -5,6 +5,25 @@
   <title>Snake Game</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
+    .controls {
+  margin-top: 15px;
+  text-align: center;
+}
+
+.controls .row {
+  display: flex;
+  justify-content: center;
+}
+
+.controls button {
+  font-size: 28px;
+  padding: 14px 20px;
+  margin: 6px;
+  border-radius: 12px;
+  border: none;
+  background: #22c55e;
+  color: black;
+}
     body {
       margin: 0;
       background: #0f172a;
@@ -28,11 +47,16 @@
 <h1>🐍 Snake Game</h1>
 <div class="score">Score: <span id="score">0</span></div>
 <canvas id="game" width="300" height="300"></canvas>
-<div class="controls">  <button onclick="setDir('UP')">⬆️</button>  <div>    
-  <button onclick="setDir('LEFT')">⬅️</button>    
-  
-  <button onclick="setDir('DOWN')">⬇️</button>    
-  <button onclick="setDir('RIGHT')">➡️</button>  </div></div>
+
+<div class="controls">
+  <button onclick="setDir('UP')">⬆️</button>
+  <div class="row">
+    <button onclick="setDir('LEFT')">⬅️</button>
+    <button onclick="setDir('DOWN')">⬇️</button>
+    <button onclick="setDir('RIGHT')">➡️</button>
+  </div>
+</div>
+
 <script>
   function setDir(dir) {  if (dir === "LEFT" && direction !== "RIGHT") direction = "LEFT";  
                         if (dir === "UP" && direction !== "DOWN") direction = "UP"; 
