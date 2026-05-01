@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Stickman Runner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body {
+  margin: 0;
+  background: #0f172a;
+  color: white;
+  font-family: Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+h1 {
+  margin: 10px 0;
+}
+
+canvas {
+  background: #020617;
+  border: 4px solid #38bdf8;
+  box-shadow: 0 0 20px #38bdf8;
+}
+
+p {
+  margin: 8px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🏃 Stickman Runner</h1>
+<p>Tap or click to jump</p>
+<canvas id="game" width="350" height="200"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let stickman = { x: 50, y: 140, w: 20, h: 40, vy: 0 };
+let gravity = 1.2;
+let jumping = false;
+
+let obstacle = { x: 350, y: 160, w: 20, h: 40 };
+let speed = 4;
+let score = 0;
+
+function drawStickman() {
+  ctx.fillStyle = "white";
+  ctx.fillRect(stickman.x, stickman.y, stickman.w, stickman.h);
+}
+
+function drawObstacle() {
+  ctx.fillStyle = "#ef4444";
+  ctx.fillRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h);
+}
+
+function update() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Ground
+  ctx.strokeStyle = "#22c55e";
+  ctx.beginPath();
+  ctx.moveTo(0, 180);
+  ctx.lineTo(canvas.width, 180);
+  ctx.stroke();
+
+  // Jump physics
+  stickman.y += stickman.vy;
+  stickman.vy += gravity;
+
+  if (stickman.y > 140) {
+    stickman.y = 140;
+    stickman.vy = 0;
+    jumping = false;
+  }
+
+  // Move obstacle
+  obstacle.x -= speed;
+  if (obstacle.x < -obstacle.w) {
+    obstacle.x = canvas.width + 50;
+    score++;
+  }
+
+  // Collision
+  if (
+    stickman.x < obstacle.x + obstacle.w &&
+    stickman.x + stickman.w > obstacle.x &&
+    stickman.y < obstacle.y + obstacle.h &&
+    stickman.y + stickman.h > obstacle.y
+  ) {
+    alert("Game Over! Score: " + score);
+    location.reload();
+  }
+
+  drawStickman();
+  drawObstacle();
+
+  ctx.fillStyle = "white";
+  ctx.fillText("Score: " + score, 10, 20);
+}
+
+function jump() {
+  if (!jumping) {
+    stickman.vy = -15;
+    jumping = true;
+  }
+}
+
+// Touch + click
+canvas.addEventListener("click", jump);
+canvas.addEventListener("touchstart", jump);
+
+// Start loop
+setInterval(update, 30);
+</script>
+
+</body>
+</html>
