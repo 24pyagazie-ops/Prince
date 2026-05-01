@@ -117,8 +117,49 @@ canvas.addEventListener("click", jump);
 canvas.addEventListener("touchstart", jump);
 
 // Start loop
+  
 setInterval(update, 30);
 </script>
+  function update() {
+  frame++;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  // ground
+  ctx.strokeStyle = "#22c55e";
+  ctx.beginPath();
+  ctx.moveTo(0, 180);
+  ctx.lineTo(canvas.width, 180);
+  ctx.stroke();
+
+  // gravity
+  runner.y += runner.vy;
+  runner.vy += gravity;
+
+  if (runner.y > 140) {
+    runner.y = 140;
+    runner.vy = 0;
+  }
+
+  // police gets closer (harder over time)
+  police.x += 0.4 + frame * 0.0008;
+
+  // draw characters
+  drawRunner(runner.x, runner.y);
+  drawPolice(police.x);
+
+  // caught by police
+  if (police.x > runner.x - 8) {
+    alert("🚓 Caught by police!");
+    location.reload();
+  }
+
+  ctx.fillStyle = "white";
+  ctx.fillText("Survival Time: " + Math.floor(frame / 30), 10, 20);
+}
+
+let runner = { x: 90, y: 140, vy: 0 };
+  let police = { x: -80 };
+  let gravity = 1.2;
+  let frame = 0;
 </body>
 </html>
