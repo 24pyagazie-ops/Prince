@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Prince Game Zone</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: white;
+      text-align: centre;
+    }
+    header {
+      background: #020617;
+      padding: 20px;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    .games {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      padding: 20px;
+    }
+    .game {
+      background: #1e293b;
+      padding: 20px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .game:hover {
+      transform: scale(1.05);
+      background: #334155;
+    }
+    footer {
+      padding: 10px;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+
+<header>🎮 Prince Game Zone</header>
+
+<p>Click a game to play</p>
+
+<div class="games">
+  <div class="game" onclick="alert('Snake coming soon')">🐍 Snake</div>
+  <div class="game" onclick="alert('Stickman coming soon')">🏃 Stickman</div>
+  <div class="game" onclick="alert('Car game coming soon')">🚗 Car Game</div>
+  <div class="game" onclick="alert('More games soon')">➕ More Games</div>
+</div>
+
+<footer>Made with ❤️ on GitHub Pages</footer>
+
+</body>
+</html>
