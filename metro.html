@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Metro Runner</title>
+<style>
+  body{
+    margin:0;
+    background:#0f172a;
+    color:#fff;
+    font-family: Arial, sans-serif;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    user-select:none;
+  }
+  h1{ margin:10px 0 4px; font-size:20px; }
+  .hud{ display:flex; gap:16px; margin-bottom:8px; font-size:14px; opacity:.95; }
+  canvas{
+    border:4px solid #38bdf8;
+    box-shadow:0 0 20px #38bdf8;
+    border-radius:12px;
+    background:#020617;
+    touch-action: none; /* important for iPad swipes */
+  }
+  .help{ font-size:12px; opacity:.8; margin:8px 0 10px; text-align:center; }
+  .btns{
+    display:flex; gap:10px; margin-bottom:14px;
+  }
+  .btns button{
+    font-size:18px;
+    padding:10px 14px;
+    border:none;
+    border-radius:12px;
+    background:#22c55e;
+    color:#001b0f;
+    font-weight:700;
+  }
+</style>
+</head>
+<body>
+<h1>🚇 Metro Runner</h1>
+<div class="hud">
+  <div>Score: <span id="score">0</span></div>
+  <div>Coins: <span id="coins">0</span></div>
+  <div>Speed: <span id="spd">1.0</span></div>
+</div>
+
+<canvas id="c" width="380" height="520"></canvas>
+
+<div class="help">
+  Swipe ◀▶ to change lanes • Swipe ▲ to jump • Swipe ▼ to slide<br/>
+  (Keyboard also works: arrows)
+</div>
+
+<!-- Optional big buttons (nice on iPad) -->
+<div class="btns">
+  <button id="L">◀</button>
+  <button id="U">▲</button>
+  <button id="D">▼</button>
+  <button id="R">▶</button>
+</div>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+const scoreEl = document.getElementById("score");
+const coinsEl = document.getElementById("coins");
+const spdEl   = document.getElementById("spd");
+
+const W = canvas.width, H = canvas.height;
+
+// Perspective settings
+const horizonY = 90;
+const groundY  = H - 40;
+
+// Lane positions (near + far for perspective)
+const laneNear = [W/2 - 100, W/2, W/2 + 100];
+const laneFar  = [W/2 - 35,  W/2, W/2 + 35];
+
+// Player
+let lane = 1;
+let laneX = laneNear[lane];
+let targetLane = lane;
+
+let player = {
+  z: 0.88,          // near camera
+  yOffset: 0,       // jump height (screen space)
+  vy: 0,
+  jumping: false,
+  sliding: false,
+  slideTimer: 0
+};
+
+// Game objects live in "z" space: 0 (far) -> 1 (near)
+let obstacles = [];
+let coins = [];
+let score = 0;
+let coinCount = 0;
+
+let speed = 0.55;     // how fast z increases
+let spawnT = 0;
+let coinT = 0;
+
+let gameOver = false;
+
+// Helpers
+function lerp(a,b,t){ return a + (b-a)*t; }
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+function laneXatZ(l, z){
+  // z=0 => far position, z=1 => near position
+  return lerp(laneFar[l], laneNear[l], z);
+}
+function yAtZ(z){
+  return lerp(horizonY, groundY, z);
+}
+function scaleAtZ(z){
+  return 0.22 + z * 1.35;
+}
+
+// Spawn obstacles: some require jump, some require slide
+function spawnObstacle(){
+  const r = Math.random();
+  const l = Math.floor(Math.random()*3);
+
+  if(r < 0.35){
+    // 🚆 TRAIN — blocks entire lane
+    obstacles.push({ lane:l, z:0.02, type:"train" });
+  } else if(r < 0.7){
+    // LOW barrier (jump)
+    obstacles.push({ lane:l, z:0.02, type:"low" });
+  } else {
+    // HIGH barrier (slide)
+    obstacles.push({ lane:l, z:0.02, type:"high" });
+  }
+}
+  // type: "low" = must jump, "high" = must slide
+  const type = Math.random() < 0.55 ? "low" : "high";
+  const l = Math.floor(Math.random()*3);
+  obstacles.push({ lane:l, z:0.02, type });
+}
+
+// Spawn coin line in a lane
+function spawnCoins(){
+  const l = Math.floor(Math.random()*3);
+  // 3 coins in a row (slightly spaced by z)
+  coins.push({ lane:l, z:0.02 });
+  coins.push({ lane:l, z:0.06 });
+  coins.push({ lane:l, z:0.10 });
+}
+
+function reset(){
+  obstacles = [];
+  coins = [];
+  score = 0;
+  coinCount = 0;
+  speed = 0.55;
+  spawnT = 0;
+  coinT = 0;
+  lane = 1;
+  targetLane = 1;
+  laneX = laneNear[1];
+  player.yOffset = 0;
+  player.vy = 0;
+  player.jumping = false;
+  player.sliding = false;
+  player.slideTimer = 0;
+  gameOver = false;
+}
+
+function doJump(){
+  if(gameOver) { reset(); return; }
+  if(!player.jumping && !player.sliding){
+    player.jumping = true;
+    player.vy = 14; // jump strength
+  }
+}
+function doSlide(){
+  if(gameOver) { reset(); return; }
+  if(!player.sliding && !player.jumping){
+    player.sliding = true;
+    player.slideTimer = 18; // frames
+  }
+}
+function goLeft(){
+  if(gameOver) { reset(); return; }
+  targetLane = clamp(targetLane - 1, 0, 2);
+}
+function goRight(){
+  if(gameOver) { reset(); return; }
+  targetLane = clamp(targetLane + 1, 0, 2);
+}
+
+// Input: keyboard
+document.addEventListener("keydown", (e)=>{
+  if(e.key === "ArrowLeft")  goLeft();
+  if(e.key === "ArrowRight") goRight();
+  if(e.key === "ArrowUp")    doJump();
+  if(e.key === "ArrowDown")  doSlide();
+});
+
+// Big buttons (optional)
+document.getElementById("L").onclick = goLeft;
+document.getElementById("R").onclick = goRight;
+document.getElementById("U").onclick = doJump;
+document.getElementById("D").onclick = doSlide;
+
+// Touch swipe
+let sx=0, sy=0;
+canvas.addEventListener("touchstart", (e)=>{
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  sx = t.clientX; sy = t.clientY;
+}, {passive:false});
+
+canvas.addEventListener("touchend", (e)=>{
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const dx = t.clientX - sx;
+  const dy = t.clientY - sy;
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  const TH = 22;
+
+  if(ax > ay && ax > TH){
+    if(dx < 0) goLeft(); else goRight();
+  } else if(ay > ax && ay > TH){
+    if(dy < 0) doJump(); else doSlide();
+  } else {
+    // small tap = jump
+    doJump();
+  }
+}, {passive:false});
+
+// Drawing
+function drawTrack(){
+  // sky glow
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, "#081128");
+  g.addColorStop(1, "#020617");
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  // rails (3 lanes) with perspective
+  for(let z=0; z<=1; z+=0.05){
+    const y = yAtZ(z);
+    ctx.strokeStyle = "rgba(56,189,248,0.15)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(laneXatZ(0,z), y);
+    ctx.lineTo(laneXatZ(2,z), y);
+    ctx.stroke();
+  }
+
+  // lane lines
+  for(let i=0;i<3;i++){
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(laneFar[i], horizonY);
+    ctx.lineTo(laneNear[i], groundY);
+    ctx.stroke();
+  }
+
+  // ground strip
+  ctx.fillStyle = "rgba(255,255,255,0.03)";
+  ctx.fillRect(0, groundY, W, H-groundY);
+}
+
+function drawPlayer(){
+  // Smooth lane change
+  laneX = lerp(laneX, laneNear[targetLane], 0.22);
+
+  const z = player.z;
+  const px = laneXatZ(targetLane, z);
+  const py = yAtZ(z) - player.yOffset;
+
+  const s = scaleAtZ(z);
+  const w = 16*s;
+  const h = (player.sliding ? 18*s : 34*s);
+
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(px, yAtZ(z)+8, 18*s, 5*s, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // body (simple “humanoid” block style)
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(px - w/2, py - h, w, h);
+
+  // head
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.beginPath();
+  ctx.arc(px, py - h - 7*s, 6*s, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawObstacle(o){
+  if(o.type === "train"){
+  const x = laneXatZ(o.lane, o.z);
+  const y = yAtZ(o.z);
+  const s = scaleAtZ(o.z);
+
+  // Train body
+  ctx.fillStyle = "#475569";
+  ctx.fillRect(x - 36*s, y - 60*s, 72*s, 60*s);
+
+  // Windows
+  ctx.fillStyle = "#0ea5e9";
+  ctx.fillRect(x - 24*s, y - 46*s, 16*s, 14*s);
+  ctx.fillRect(x + 8*s,  y - 46*s, 16*s, 14*s);
+
+  return;
+}
+
+  const x = laneXatZ(o.lane, o.z);
+  const y = yAtZ(o.z);
+  const s = scaleAtZ(o.z);
+
+  if(o.type === "low"){
+    // low barrier: must JUMP
+    ctx.fillStyle = "#ef4444";
+    ctx.fillRect(x - 18*s, y - 16*s, 36*s, 18*s);
+  } else {
+    // high barrier: must SLIDE
+    ctx.fillStyle = "#f97316";
+    ctx.fillRect(x - 16*s, y - 60*s, 32*s, 62*s);
+  }
+}
+
+function drawCoin(c){
+  const x = laneXatZ(c.lane, c.z);
+  const y = yAtZ(c.z) - 18*scaleAtZ(c.z);
+  const s = scaleAtZ(c.z);
+
+  ctx.fillStyle = "#fbbf24";
+  ctx.beginPath();
+  ctx.arc(x, y, 8*s, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  ctx.beginPath();
+  ctx.arc(x-3*s, y-3*s, 3*s, 0, Math.PI*2);
+  ctx.fill();
+}
+
+// Collision checks when obstacle is close (z window)
+function checkCollision(){
+  const pLane = targetLane;
+  const jumping = player.yOffset > 12;      // in air
+  const sliding = player.sliding;
+
+  // obstacles
+  for(const o of obstacles){
+    if(o.lane !== pLane) continue;
+    if(o.z > 0.80 && o.z < 0.94){
+      if(o.type === "low" && !jumping){
+        gameOver = true;
+      }
+      if(o.type === "high" && !sliding){
+        gameOver = true;
+      }
+    }
+  }
+
+  // coins
+  for(const c of coins){
+    if(c.lane !== pLane) continue;
+    if(c.z > 0.80 && c.z < 0.94){
+      coinCount++;
+      c.z = 999; // remove
+    }
+  }
+  coins = coins.filter(c => c.z < 1.2);
+}
+
+let last = performance.now();
+function loop(t){
+  const dt = Math.min(0.03, (t-last)/1000);
+  last = t;
+
+  drawTrack();
+
+  if(!gameOver){
+    // jump physics
+    if(player.jumping){
+      player.yOffset += player.vy;
+      player.vy -= 0.85; // gravity
+      if(player.yOffset <= 0){
+        player.yOffset = 0;
+        player.vy = 0;
+        player.jumping = false;
+      }
+    }
+
+    // slide timer
+    if(player.sliding){
+      player.slideTimer--;
+      if(player.slideTimer <= 0){
+        player.sliding = false;
+      }
+    }
+
+    // progressive difficulty (speed increases slowly)
+    speed += dt * 0.01;
+    spdEl.textContent = (speed/0.55).toFixed(1);
+
+    // spawn logic
+    spawnT += dt;
+    coinT  += dt;
+
+    // obstacle spawn gets faster over time
+    const spawnEvery = Math.max(0.55, 1.05 - (speed-0.55)*0.6);
+    if(spawnT > spawnEvery){
+      spawnT = 0;
+      // sometimes spawn 2 obstacles to make it harder
+      spawnObstacle();
+      if(Math.random() < 0.22) spawnObstacle();
+    }
+
+    // coins
+    if(coinT > 0.9){
+      coinT = 0;
+      if(Math.random() < 0.8) spawnCoins();
+    }
+
+    // move world toward player (increase z)
+    for(const o of obstacles) o.z += speed * dt;
+    for(const c of coins)     c.z += speed * dt;
+
+    // remove old objects
+    obstacles = obstacles.filter(o => o.z < 1.15);
+    coins     = coins.filter(c => c.z < 1.15);
+
+    // score
+    score += Math.floor(60 * dt);
+    scoreEl.textContent = score;
+    coinsEl.textContent = coinCount;
+
+    checkCollision();
+  }
+
+  // draw coins/obstacles (far to near)
+  coins.sort((a,b)=>a.z-b.z);
+  obstacles.sort((a,b)=>a.z-b.z);
+
+  for(const c of coins) drawCoin(c);
+  for(const o of obstacles) drawObstacle(o);
+
+  drawPlayer();
+
+  if(gameOver){
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = "white";
+    ctx.font = "20px Arial";
+    ctx.fillText("Game Over", W/2-55, H/2-10);
+    ctx.font = "14px Arial";
+    ctx.fillText("Tap or press any arrow to restart", W/2-110, H/2+20);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// Restart on any click/tap on canvas when game over
+canvas.addEventListener("click", ()=>{ if(gameOver) reset(); });
+canvas.addEventListener("touchstart", ()=>{ if(gameOver) reset(); }, {passive:true});
+</script>
+</body>
+</html>
