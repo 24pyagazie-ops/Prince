@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Prince Arcade: Runner + Buggy Racing</title>
+<style>
+  body{margin:0;background:#0f172a;color:#fff;font-family:Arial,system-ui,sans-serif;text-align:center}
+  header{padding:12px 10px;font-weight:800;font-size:20px}
+  .wrap{max-width:980px;margin:0 auto;padding:10px}
+  canvas{width:100%;max-width:920px;height:auto;border:4px solid #38bdf8;border-radius:14px;box-shadow:0 0 20px #38bdf8;background:#020617;touch-action:none}
+  .hud{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:8px 0 10px;font-size:13px;opacity:.95}
+  .btnrow{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:10px 0 14px}
+  button{border:none;border-radius:14px;padding:12px 16px;font-weight:800;font-size:16px;background:#22c55e;color:#001b0f}
+  button.alt{background:#38bdf8}
+  button.red{background:#ef4444;color:#fff}
+  .small{font-size:12px;opacity:.75;margin-top:6px}
+</style>
+</head>
+<body>
+<header>🎮 Prince Arcade — Runner + Buggy Racing</header>
+<div class="wrap">
+  <div class="hud" id="hud"></div>
+  <canvas id="game" width="900" height="520"></canvas>
+
+  <!-- Controls show/hide depending on mode -->
+  <div class="btnrow" id="menuBtns">
+    <button onclick="startRunner()">🚇 Metro Runner</button>
+    <button onclick="startRacer()">🏝️ Beach Buggy Racer</button>
+    <button class="alt" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+  </div>
+
+  <div class="btnrow" id="racerBtns" style="display:none">
+    <button id="leftBtn">⬅️</button>
+    <button id="gasBtn" class="alt">⛽</button>
+    <button id="brakeBtn" class="red">🛑</button>
+    <button id="rightBtn">➡️</button>
+    <button onclick="backToMenu()">🏠 Menu</button>
+  </div>
+
+  <div class="btnrow" id="runnerBtns" style="display:none">
+    <button onclick="backToMenu()">🏠 Menu</button>
+    <button class="alt" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+  </div>
+
+  <div class="small">
+    Tip: On iPad, enable auto‑rotate for the best fullscreen landscape.
+  </div>
+</div>
+
+<script>
+/* ===========================
+   Shared helpers + setup
+=========================== */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const hud = document.getElementById("hud");
+
+const menuBtns = document.getElementById("menuBtns");
+const racerBtns = document.getElementById("racerBtns");
+const runnerBtns = document.getElementById("runnerBtns");
+
+const W = canvas.width, H = canvas.height;
+let mode = "menu"; // menu | runner | racer
+let lastT = performance.now();
+
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function lerp(a,b,t){ return a + (b-a)*t; }
+function rand(a,b){ return Math.random()*(b-a)+a; }
+function randi(a,b){ return Math.floor(rand(a,b+1)); }
+function now(){ return performance.now(); }
+
+function drawRoundedRect(x,y,w,h,r){
+  r = Math.min(r, w/2, h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+function toggleFullscreen(){
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.();
+    return;
+  }
+  canvas.requestFullscreen?.().catch(()=>{});
+}
+
+/* ===========================
+   MENU
+=========================== */
+function backToMenu(){
+  mode = "menu";
+  menuBtns.style.display = "";
+  racerBtns.style.display = "none";
+  runnerBtns.style.display = "none";
+}
+
+function startRunner(){
+  mode = "runner";
+  resetRunner();
+  menuBtns.style.display = "none";
+  racerBtns.style.display = "none";
+  runnerBtns.style.display = "";
+}
+
+function startRacer(){
+  mode = "racer";
+  resetRacer();
+  menuBtns.style.display = "none";
+  runnerBtns.style.display = "none";
+  racerBtns.style.display = "";
+}
+
+/* ===========================
+   RUNNER (Subway-style)
+   - 3 lanes
+   - trains block lanes
+   - jump/slide
+   - double-tap hoverboard shield
+=========================== */
+const runner = {
+  lane: 1,
+  targetLane: 1,
+  y: 0,
+  vy: 0,
+  jumping: false,
+  sliding: false,
+  slideT: 0,
+  score: 0,
+  coins: 0,
+  speed: 0.65,
+  hoverUntil: 0,
+  hoverUsed: false,
+  gameOver: false,
+  objs: [] // {type:'coin'|'barrierLow'|'barrierHigh'|'train', laneStart, laneCount, z}
+};
+
+const horizonY = 90;
+const groundY = H - 40;
+const laneNear = [W/2 - 200, W/2, W/2 + 200];
+const laneFar  = [W/2 - 70,  W/2, W/2 + 70];
+
+function laneXatZ(l, z){ return lerp(laneFar[l], laneNear[l], z); }
+function yAtZ(z){ return lerp(horizonY, groundY, z); }
+function sAtZ(z){ return 0.25 + z*1.25; }
+function hoverActive(){ return now() < runner.hoverUntil; }
+
+function resetRunner(){
+  runner.lane = 1;
+  runner.targetLane = 1;
+  runner.y = 0;
+  runner.vy = 0;
+  runner.jumping = false;
+  runner.sliding = false;
+  runner.slideT = 0;
+  runner.score = 0;
+  runner.coins = 0;
+  runner.speed = 0.65;
+  runner.hoverUntil = 0;
+  runner.hoverUsed = false;
+  runner.gameOver = false;
+  runner.objs = [];
+  runner._spawnT = 0;
+  runner._coinT = 0;
+}
+
+function runnerCrash(){
+  // hoverboard saves you ONCE per activation
+  if (hoverActive() && !runner.hoverUsed){
+    runner.hoverUsed = true;
+    runner.hoverUntil = 0;
+    return;
+  }
+  runner.gameOver = true;
+}
+
+function spawnRunnerObstacle(){
+  const p = Math.random();
+  if (p < 0.35){
+    // train blocks 1-2 lanes, rare 3
+    const r = Math.random();
+    const laneCount = (r < 0.70) ? 1 : (r < 0.96 ? 2 : 3);
+    const start = (laneCount === 3) ? 0 : randi(0, 3-laneCount);
+    runner.objs.push({type:"train", laneStart:start, laneCount, z:0.02});
+  } else if (p < 0.70){
+    runner.objs.push({type:"barrierLow", laneStart:randi(0,2), laneCount:1, z:0.02});
+  } else {
+    runner.objs.push({type:"barrierHigh", laneStart:randi(0,2), laneCount:1, z:0.02});
+  }
+}
+
+function spawnRunnerCoins(){
+  const l = randi(0,2);
+  runner.objs.push({type:"coin", laneStart:l, laneCount:1, z:0.02});
+  runner.objs.push({type:"coin", laneStart:l, laneCount:1, z:0.06});
+  runner.objs.push({type:"coin", laneStart:l, laneCount:1, z:0.10});
+}
+
+function drawRunnerTrack(){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, "#081128");
+  g.addColorStop(1, "#020617");
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  // lane lines
+  for(let i=0;i<3;i++){
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(laneFar[i], horizonY);
+    ctx.lineTo(laneNear[i], groundY);
+    ctx.stroke();
+  }
+
+  // subtle ground
+  ctx.fillStyle = "rgba(255,255,255,0.03)";
+  ctx.fillRect(0, groundY, W, H-groundY);
+}
+
+function drawRunnerPlayer(){
+  // smooth lane
+  runner.lane = lerp(runner.lane, runner.targetLane, 0.22);
+
+  const z = 0.88;
+  const laneIdx = Math.round(runner.lane);
+  const px = laneXatZ(laneIdx, z);
+  const py = yAtZ(z) - runner.y;
+
+  const s = sAtZ(z);
+  const w = 22*s;
+  const h = (runner.sliding ? 22*s : 44*s);
+
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(px, yAtZ(z)+10, 28*s, 7*s, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // hoverboard visual
+  if(hoverActive()){
+    ctx.strokeStyle = "rgba(56,189,248,0.9)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(px, py-18*s, 40*s, 0, Math.PI*2);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(56,189,248,0.85)";
+    ctx.fillRect(px - 26*s, yAtZ(z)+6, 52*s, 8*s);
+    ctx.fillStyle = "rgba(34,197,94,0.85)";
+    ctx.fillRect(px - 18*s, yAtZ(z)+8, 8*s, 5*s);
+    ctx.fillRect(px + 10*s, yAtZ(z)+8, 8*s, 5*s);
+  }
+
+  // body (simple humanoid)
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(px - w/2, py - h, w, h);
+  ctx.beginPath();
+  ctx.arc(px, py - h - 9*s, 7*s, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawRunnerObj(o){
+  const z = o.z;
+  const s = sAtZ(z);
+  const y = yAtZ(z);
+
+  if(o.type === "coin"){
+    const x = laneXatZ(o.laneStart, z);
+    const cy = y - 26*s;
+    ctx.fillStyle = "#fbbf24";
+    ctx.beginPath();
+    ctx.arc(x, cy, 10*s, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.beginPath();
+    ctx.arc(x-4*s, cy-4*s, 4*s, 0, Math.PI*2);
+    ctx.fill();
+    return;
+  }
+
+  if(o.type === "barrierLow"){
+    const x = laneXatZ(o.laneStart, z);
+    ctx.fillStyle = "#ef4444";
+    ctx.fillRect(x - 26*s, y - 22*s, 52*s, 24*s);
+    return;
+  }
+
+  if(o.type === "barrierHigh"){
+    const x = laneXatZ(o.laneStart, z);
+    ctx.fillStyle = "#f97316";
+    ctx.fillRect(x - 22*s, y - 88*s, 44*s, 90*s);
+    return;
+  }
+
+  if(o.type === "train"){
+    const start = o.laneStart;
+    const end = o.laneStart + o.laneCount - 1;
+    const x1 = laneXatZ(start, z) - 50*s;
+    const x2 = laneXatZ(end, z) + 50*s;
+    const w = x2-x1;
+
+    ctx.fillStyle = "#64748b";
+    ctx.fillRect(x1, y - 200*s, w, 210*s);
+    ctx.fillStyle = "#fbbf24";
+    ctx.fillRect(x1, y - 140*s, w, 12*s);
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    const winCount = Math.max(2, Math.floor(w / (55*s)));
+    for(let i=0;i<winCount;i++){
+      const wx = x1 + 14*s + i*((w-28*s)/winCount);
+      ctx.fillRect(wx, y - 180*s, 26*s, 20*s);
+    }
+    return;
+  }
+}
+
+function runnerHitWindow(z){ return z>0.80 && z<0.94; }
+
+function updateRunner(dt){
+  // physics
+  if(!runner.gameOver){
+    // jump
+    if(runner.jumping){
+      runner.y += runner.vy;
+      runner.vy -= 0.9;
+      if(runner.y <= 0){
+        runner.y = 0; runner.vy = 0; runner.jumping=false;
+      }
+    }
+    // slide
+    if(runner.sliding){
+      runner.slideT -= 1;
+      if(runner.slideT <= 0) runner.sliding=false;
+    }
+
+    // difficulty
+    runner.speed += dt*0.012;
+    runner.score += Math.floor(60*dt);
+
+    // spawns
+    runner._spawnT += dt;
+    runner._coinT  += dt;
+
+    const spawnEvery = Math.max(0.55, 1.05 - (runner.speed-0.65)*0.55);
+    if(runner._spawnT > spawnEvery){
+      runner._spawnT = 0;
+      spawnRunnerObstacle();
+      if(Math.random() < 0.20) spawnRunnerObstacle();
+    }
+
+    if(runner._coinT > 0.9){
+      runner._coinT = 0;
+      if(Math.random() < 0.85) spawnRunnerCoins();
+    }
+
+    // move objects
+    for(const o of runner.objs) o.z += runner.speed*dt;
+    runner.objs = runner.objs.filter(o => o.z < 1.15);
+
+    // collision
+    const laneIdx = clamp(Math.round(runner.targetLane), 0, 2);
+    const jumping = runner.y > 14;
+    const sliding = runner.sliding;
+
+    for(const o of runner.objs){
+      if(!runnerHitWindow(o.z)) continue;
+
+      if(o.type === "coin" && o.laneStart === laneIdx){
+        runner.coins += 1;
+        o.z = 999;
+        continue;
+      }
+
+      if(o.type === "barrierLow" && o.laneStart === laneIdx){
+        if(!jumping) runnerCrash();
+      }
+
+      if(o.type === "barrierHigh" && o.laneStart === laneIdx){
+        if(!sliding) runnerCrash();
+      }
+
+      if(o.type === "train"){
+        const start = o.laneStart, end = o.laneStart + o.laneCount - 1;
+        if(laneIdx >= start && laneIdx <= end){
+          runnerCrash();
+        }
+      }
+
+      if(runner.gameOver) break;
+    }
+
+    runner.objs = runner.objs.filter(o => o.z < 2);
+  }
+}
+
+function renderRunner(){
+  drawRunnerTrack();
+
+  // draw objs far->near
+  runner.objs.sort((a,b)=>a.z-b.z);
+  for(const o of runner.objs) drawRunnerObj(o);
+
+  drawRunnerPlayer();
+
+  // overlay
+  if(runner.gameOver){
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = "#fff";
+    ctx.font = "38px Arial";
+    ctx.fillText("Game Over", W/2-110, H/2-10);
+    ctx.font = "18px Arial";
+    ctx.fillText("Tap to restart", W/2-70, H/2+24);
+  }
+}
+
+/* Runner gestures */
+let touchStartX=0, touchStartY=0, lastTap=0;
+
+function runnerTap(){
+  if(runner.gameOver){ resetRunner(); return; }
+  // single tap = jump
+  if(!runner.jumping && !runner.sliding){
+    runner.jumping=true; runner.vy=14;
+  }
+}
+
+function runnerDoubleTap(){
+  // hoverboard power-up: 8 seconds, saves once
+  runner.hoverUntil = now() + 8000;
+  runner.hoverUsed = false;
+}
+
+/* ===========================
+   RACER (Beach Buggy style)
+   - top-down kart feel
+   - coins + powerups
+   - drifting-ish steering
+=========================== */
+const racer = {
+  x: W/2, y: H*0.72,
+  vx: 0, vy: 0,
+  angle: 0,
+  speed: 0,
+  score: 0,
+  coins: 0,
+  boostUntil: 0,
+  shieldUntil: 0,
+  gameOver: false,
+  objs: [] // {type:'rock'|'coin'|'power', x,y, vy}
+};
+
+let steerL=false, steerR=false, gas=false, brake=false;
+
+function resetRacer(){
+  racer.x=W/2; racer.y=H*0.72;
+  racer.vx=0; racer.vy=0;
+  racer.angle=0;
+  racer.speed=0;
+  racer.score=0;
+  racer.coins=0;
+  racer.boostUntil=0;
+  racer.shieldUntil=0;
+  racer.gameOver=false;
+  racer.objs=[];
+  racer._spawnT=0;
+  racer._coinT=0;
+  racer._powT=0;
+}
+
+function racerShield(){ return now() < racer.shieldUntil; }
+function racerBoost(){ return now() < racer.boostUntil; }
+
+function spawnRacerObstacle(){
+  // rocks + logs
+  const x = rand(120, W-120);
+  const type = Math.random()<0.5 ? "rock" : "log";
+  racer.objs.push({type, x, y:-60, vy: rand(240, 320)});
+}
+
+function spawnRacerCoins(){
+  const x = rand(140, W-140);
+  racer.objs.push({type:"coin", x, y:-40, vy: rand(220, 300)});
+}
+
+function spawnRacerPower(){
+  const x = rand(140, W-140);
+  const type = Math.random()<0.5 ? "boost" : "shield";
+  racer.objs.push({type:"power", power:type, x, y:-40, vy: rand(240, 320)});
+}
+
+function drawRacerScene(){
+  // beach/road gradient
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, "#06243a");
+  g.addColorStop(0.35, "#0b3a5c");
+  g.addColorStop(1, "#1a4b2a");
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,W,H);
+
+  // track
+  ctx.fillStyle = "#caa56a"; // sand
+  drawRoundedRect(120, 40, W-240, H-80, 30);
+  ctx.fill();
+
+  // lane marks scrolling
+  ctx.strokeStyle="rgba(255,255,255,0.25)";
+  ctx.lineWidth=4;
+  const offset = (racer.score*2) % 70;
+  for(let y=60-offset; y<H; y+=70){
+    ctx.beginPath();
+    ctx.moveTo(W/2, y);
+    ctx.lineTo(W/2, y+35);
+    ctx.stroke();
+  }
+
+  // borders
+  ctx.strokeStyle="rgba(2,6,23,0.55)";
+  ctx.lineWidth=10;
+  drawRoundedRect(120, 40, W-240, H-80, 30);
+  ctx.stroke();
+
+  // UI hints
+  ctx.fillStyle="rgba(255,255,255,0.85)";
+  ctx.font="16px Arial";
+  ctx.fillText("Beach Buggy Racer", 16, 28);
+}
+
+function drawRacerCar(){
+  const s = racerBoost() ? 1.08 : 1.0;
+
+  // shadow
+  ctx.fillStyle="rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(racer.x, racer.y+20, 38, 12, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // shield bubble
+  if(racerShield()){
+    ctx.strokeStyle="rgba(56,189,248,0.85)";
+    ctx.lineWidth=4;
+    ctx.beginPath();
+    ctx.arc(racer.x, racer.y, 46, 0, Math.PI*2);
+    ctx.stroke();
+  }
+
+  // car body
+  ctx.save();
+  ctx.translate(racer.x, racer.y);
+  ctx.rotate(racer.angle);
+  ctx.scale(s,s);
+
+  ctx.fillStyle="#ef4444";
+  drawRoundedRect(-28, -44, 56, 88, 16);
+  ctx.fill();
+
+  ctx.fillStyle="#111827";
+  drawRoundedRect(-18, -22, 36, 26, 10);
+  ctx.fill();
+
+  // wheels
+  ctx.fillStyle="#0b1020";
+  ctx.fillRect(-34, -34, 10, 18);
+  ctx.fillRect(24, -34, 10, 18);
+  ctx.fillRect(-34, 16, 10, 18);
+  ctx.fillRect(24, 16, 10, 18);
+
+  ctx.restore();
+}
+
+function drawRacerObj(o){
+  if(o.type==="rock"){
+    ctx.fillStyle="#64748b";
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, 26, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,0.25)";
+    ctx.beginPath();
+    ctx.arc(o.x-8, o.y-8, 7, 0, Math.PI*2);
+    ctx.fill();
+  } else if(o.type==="log"){
+    ctx.fillStyle="#8b5a2b";
+    drawRoundedRect(o.x-34, o.y-16, 68, 32, 12);
+    ctx.fill();
+    ctx.fillStyle="rgba(0,0,0,0.15)";
+    drawRoundedRect(o.x-30, o.y-10, 60, 20, 10);
+    ctx.fill();
+  } else if(o.type==="coin"){
+    ctx.fillStyle="#fbbf24";
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, 12, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,0.6)";
+    ctx.beginPath();
+    ctx.arc(o.x-4, o.y-4, 4, 0, Math.PI*2);
+    ctx.fill();
+  } else if(o.type==="power"){
+    ctx.fillStyle = o.power==="boost" ? "#22c55e" : "#38bdf8";
+    drawRoundedRect(o.x-18, o.y-18, 36, 36, 12);
+    ctx.fill();
+    ctx.fillStyle="#001b0f";
+    ctx.font="18px Arial";
+    ctx.fillText(o.power==="boost" ? "⚡" : "🛡️", o.x-7, o.y+7);
+  }
+}
+
+function hitRect(ax,ay,aw,ah,bx,by,bw,bh){
+  return ax<bx+bw && ax+aw>bx && ay<by+bh && ay+ah>by;
+}
+
+function updateRacer(dt){
+  if(racer.gameOver) return;
+
+  const turning = 2.6;
+  const accel = gas ? 520 : 260;
+  const maxSpeed = racerBoost() ? 720 : 560;
+  const drag = brake ? 0.86 : 0.94;
+
+  // steering
+  if(steerL) racer.angle -= turning*dt;
+  if(steerR) racer.angle += turning*dt;
+  racer.angle = clamp(racer.angle, -0.75, 0.75);
+
+  // speed
+  racer.speed += accel*dt;
+  racer.speed = Math.min(racer.speed, maxSpeed);
+  racer.speed *= drag;
+
+  // move car sideways based on angle
+  racer.x += Math.sin(racer.angle) * (racer.speed*0.55) * dt;
+
+  // boundaries (track edges)
+  racer.x = clamp(racer.x, 150, W-150);
+
+  // score increases with distance
+  racer.score += Math.floor((racer.speed*0.02)*dt*60);
+
+  // spawn stuff
+  racer._spawnT += dt;
+  racer._coinT  += dt;
+  racer._powT   += dt;
+
+  const spawnEvery = Math.max(0.55, 1.0 - (racer.score/1800));
+  if(racer._spawnT > spawnEvery){
+    racer._spawnT = 0;
+    spawnRacerObstacle();
+    if(Math.random()<0.25) spawnRacerObstacle();
+  }
+  if(racer._coinT > 0.25){
+    racer._coinT = 0;
+    if(Math.random()<0.75) spawnRacerCoins();
+  }
+  if(racer._powT > 4.0){
+    racer._powT = 0;
+    if(Math.random()<0.55) spawnRacerPower();
+  }
+
+  // move objects down screen (relative to speed)
+  const worldSpeed = (racer.speed*0.9) + 240;
+  for(const o of racer.objs){
+    o.y += (worldSpeed*dt);
+  }
+  racer.objs = racer.objs.filter(o => o.y < H+80);
+
+  // collisions
+  const carBox = {x:racer.x-26, y:racer.y-42, w:52, h:84};
+
+  for(const o of racer.objs){
+    if(o.type==="coin"){
+      if(hitRect(carBox.x,carBox.y,carBox.w,carBox.h, o.x-12,o.y-12,24,24)){
+        racer.coins++;
+        o.y = H+999;
+      }
+    } else if(o.type==="power"){
+      if(hitRect(carBox.x,carBox.y,carBox.w,carBox.h, o.x-18,o.y-18,36,36)){
+        if(o.power==="boost") racer.boostUntil = now()+5000;
+        if(o.power==="shield") racer.shieldUntil = now()+7000;
+        o.y = H+999;
+      }
+    } else {
+      // obstacle
+      const bw = (o.type==="rock") ? 52 : 68;
+      const bh = (o.type==="rock") ? 52 : 32;
+      if(hitRect(carBox.x,carBox.y,carBox.w,carBox.h, o.x-bw/2,o.y-bh/2,bw,bh)){
+        if(racerShield()){
+          // consume shield
+          racer.shieldUntil = 0;
+          o.y = H+999;
+        } else {
+          racer.gameOver = true;
+        }
+      }
+    }
+  }
+}
+
+function renderRacer(){
+  drawRacerScene();
+  // draw objects
+  for(const o of racer.objs) drawRacerObj(o);
+  drawRacerCar();
+
+  if(racer.gameOver){
+    ctx.fillStyle="rgba(0,0,0,0.55)";
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#fff";
+    ctx.font="38px Arial";
+    ctx.fillText("Crashed!", W/2-85, H/2-10);
+    ctx.font="18px Arial";
+    ctx.fillText("Tap to restart", W/2-70, H/2+24);
+  }
+}
+
+/* Racer touch: drag left/right = steer */
+let dragActive=false, dragX=0;
+function racerTap(){
+  if(racer.gameOver){ resetRacer(); return; }
+}
+
+/* ===========================
+   INPUT wiring
+=========================== */
+function handlePointerDown(x,y){
+  if(mode==="runner"){
+    // double tap activates hoverboard
+    const t = now();
+    if(t - lastTap < 280){
+      runnerDoubleTap();
+      lastTap = 0;
+    } else {
+      lastTap = t;
+      runnerTap();
+    }
+  } else if(mode==="racer"){
+    dragActive=true; dragX=x;
+    racerTap();
+  } else {
+    // menu tap does nothing
+  }
+}
+
+function handlePointerMove(x,y){
+  if(mode==="racer" && dragActive){
+    const dx = x - dragX;
+    // dx controls steering (left/right)
+    if(Math.abs(dx) > 6){
+      racer.angle = clamp(dx / 250, -0.75, 0.75);
+    }
+  }
+}
+
+function handlePointerUp(){
+  if(mode==="racer"){
+    dragActive=false;
+    // relax steering
+    racer.angle *= 0.7;
+  }
+}
+
+canvas.addEventListener("pointerdown", (e)=>{
+  canvas.setPointerCapture?.(e.pointerId);
+  handlePointerDown(e.offsetX*(W/canvas.clientWidth), e.offsetY*(H/canvas.clientHeight));
+});
+canvas.addEventListener("pointermove", (e)=>{
+  handlePointerMove(e.offsetX*(W/canvas.clientWidth), e.offsetY*(H/canvas.clientHeight));
+});
+canvas.addEventListener("pointerup", ()=>handlePointerUp());
+canvas.addEventListener("pointercancel", ()=>handlePointerUp());
+
+/* Racer buttons */
+const leftBtn = document.getElementById("leftBtn");
+const rightBtn = document.getElementById("rightBtn");
+const gasBtn = document.getElementById("gasBtn");
+const brakeBtn = document.getElementById("brakeBtn");
+
+function bindHold(btn, setTrue){
+  btn.addEventListener("pointerdown", (e)=>{ e.preventDefault(); setTrue(true); });
+  btn.addEventListener("pointerup", ()=>setTrue(false));
+  btn.addEventListener("pointerleave", ()=>setTrue(false));
+  btn.addEventListener("pointercancel", ()=>setTrue(false));
+}
+
+bindHold(leftBtn, v=>steerL=v);
+bindHold(rightBtn, v=>steerR=v);
+bindHold(gasBtn, v=>gas=v);
+bindHold(brakeBtn, v=>brake=v);
+
+/* ===========================
+   MAIN LOOP
+=========================== */
+function drawMenu(){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, "#0b1224");
+  g.addColorStop(1, "#020617");
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle="#fff";
+  ctx.font="44px Arial";
+  ctx.fillText("Prince Arcade", W/2-160, 170);
+  ctx.font="20px Arial";
+  ctx.fillText("Choose a game below", W/2-110, 210);
+
+  // cards
+  ctx.fillStyle="rgba(255,255,255,0.08)";
+  drawRoundedRect(140, 260, 260, 170, 18); ctx.fill();
+  drawRoundedRect(500, 260, 260, 170, 18); ctx.fill();
+
+  ctx.fillStyle="#22c55e";
+  ctx.font="22px Arial";
+  ctx.fillText("🚇 Metro Runner", 190, 330);
+  ctx.fillStyle="#38bdf8";
+  ctx.fillText("🏝️ Buggy Racer", 560, 330);
+
+  ctx.fillStyle="rgba(255,255,255,0.8)";
+  ctx.font="16px Arial";
+  ctx.fillText("Swipe + trains + hoverboard", 170, 365);
+  ctx.fillText("Kart racing + powerups", 560, 365);
+}
+
+function updateHud(){
+  if(mode==="runner"){
+    const hover = hoverActive() ? `${Math.ceil((runner.hoverUntil-now())/1000)}s` : "OFF";
+    hud.innerHTML = `
+      <div>Mode: 🚇 Runner</div>
+      <div>Score: ${runner.score}</div>
+      <div>Coins: ${runner.coins}</div>
+      <div>Speed: ${(runner.speed/0.65).toFixed(1)}x</div>
+      <div>Hover: ${hover}</div>
+      <div class="small">Swipe ◀▶ ▲ ▼ • Double‑tap hoverboard</div>
+    `;
+  } else if(mode==="racer"){
+    const sh = racerShield() ? `${Math.ceil((racer.shieldUntil-now())/1000)}s` : "OFF";
+    const bo = racerBoost() ? `${Math.ceil((racer.boostUntil-now())/1000)}s` : "OFF";
+    hud.innerHTML = `
+      <div>Mode: 🏝️ Racer</div>
+      <div>Score: ${racer.score}</div>
+      <div>Coins: ${racer.coins}</div>
+      <div>Shield: ${sh}</div>
+      <div>Boost: ${bo}</div>
+      <div class="small">Hold ⛽ + steer ⬅️➡️ (or drag)</div>
+    `;
+  } else {
+    hud.innerHTML = `<div>Pick a game: 🚇 Runner or 🏝️ Racer</div>`;
+  }
+}
+
+function loop(t){
+  const dt = Math.min(0.03, (t-lastT)/1000);
+  lastT = t;
+
+  if(mode==="menu"){
+    drawMenu();
+  } else if(mode==="runner"){
+    updateRunner(dt);
+    renderRunner();
+  } else if(mode==="racer"){
+    updateRacer(dt);
+    renderRacer();
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
