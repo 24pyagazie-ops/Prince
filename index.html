@@ -46,13 +46,8 @@
 <header>🎮 Prince Game Zone</header>
 
 <p>Click a game to play</p>
+>
 
-<div class="games">
-  <div class="game" onclick="alert('Snake coming soon')">🐍 Snake</div>
-  <div class="game" onclick="alert('Stickman coming soon')">🏃 Stickman</div>
-  <div class="game" onclick="alert('Car game coming soon')">🚗 Car Game</div>
-  <div class="game" onclick="alert('More games soon')">➕ More Games</div>
-</div>
 
 <footer>Made with ❤️ on GitHub Pages</footer>
 <hr style="border:0;height:1px;background:rgba(255,255,255,0.15);margin:16px 0;">
@@ -67,19 +62,22 @@
   <iframe id="gameFrame"
     src="snake.html"
     style="width:100%;height:70vh;border:3px solid #38bdf8;border-radius:12px;background:#000;"
-    allow="autoplay"
+    
   ></iframe>
 </div>
 
 <script>
   function loadGame(page){
     document.getElementById("gameFrame").src = page;
-    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    window.scrollTo({ 
+      top: document.body.scrollHeight, 
+      behavior: "smooth" });
   }
 </script>
 
 <style>
   button{
-
+<script>  function loadGame(page){    
+  document.getElementById("gameFrame").src = page;    window.scrollTo({      top: document.getElementById("gameFrame").offsetTop,      behavior: "smooth"    });  }</script
 </body>
 </html>
